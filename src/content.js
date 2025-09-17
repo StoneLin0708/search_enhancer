@@ -1,3 +1,7 @@
+// Search Enhancer - Chrome extension
+// SPDX-License-Identifier: GPL-3.0-only
+// https://github.com/StoneLin0708/search_enhancer
+
 (() => {
     "use strict";
 

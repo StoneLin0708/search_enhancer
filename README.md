@@ -10,5 +10,8 @@ I’ll keep updating this extension as long as it’s useful to me. Feel free to
 - May not work on all search engines or in all regions.
 - Like any extension that pokes at Google’s DOM, it can break whenever they change layouts.
 
+### License
+This project is licensed under: `SPDX-License-Identifier: GPL-3.0-only`
+See the [GNU General Public License v3.0](https://www.gnu.org/licenses/gpl-3.0.html) for details.
 
 [Buy me a coffee](https://buymeacoffee.com/tkvu4hic5g) if you feel like!
