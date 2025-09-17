@@ -113,7 +113,7 @@
     }
 
     function search_and_remove() {
-        let tree = walk_dom(document.body.querySelector("#search"));
+        let tree = walk_dom(document.body);
         if (tree === null || !tree.hasOwnProperty("nodes")) return { tree };
         tree = merge_ai_overview_nodes(tree);
         if (tree === null || !tree.hasOwnProperty("nodes")) return { tree };
