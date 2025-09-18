@@ -80,6 +80,7 @@
         } else if (tree.hasOwnProperty("nodes")) {
             if (debug_mode) console.log("Highlighting tree:", tree);
             for (const child of tree.parent.children) {
+                if (child.querySelector("path[d='" + PATHS.dots + "']") === null) continue;
                 child.style.outline = "1px solid #0000ff";
                 child.style.outlineOffset = "2px";
             }
@@ -89,7 +90,7 @@
         }
     }
 
-    function scan_and_remove_ai_overview(tree) {
+    function detect_target(tree) {
         const find_in_tree = (node) => {
             if (node.hasOwnProperty("type") && node.type === "ai_overview") {
                 return true;
@@ -109,8 +110,6 @@
                 }
 
                 if (node.parent && node.parent.style !== undefined) {
-                    if (debug_mode) console.log("Removing AI Overview element:", node.parent);
-                    node.parent.style.display = "none";
                     return node.parent;
                 } else {
                     return null;
@@ -119,74 +118,57 @@
         }
         return null;
     }
-
-    function search_and_remove() {
-        const root = document.body.querySelector("#main");
-        if (!root) root = document.body;
-        let tree = walk_dom(root);
-        if (tree === null || !tree.hasOwnProperty("nodes")) return { tree };
-        if (debug_mode) console.log("Initial tree:", tree);
-        tree = merge_ai_overview_nodes(tree);
-        if (debug_mode) console.log("Merged tree:", tree);
-        if (tree === null || !tree.hasOwnProperty("nodes")) return { tree };
-        if (debug_mode) highlight_tree(tree);
-        if (!disable) {
-            const res = scan_and_remove_ai_overview(tree);
-            if (res) {
-                if (debug_mode) console.log("AI Overview removed:", res);
-                return { disabled: res, tree };
-            } else {
-                if (debug_mode) console.log("No AI Overview found");
-                return { tree };
+    function compare_trees(tree1, tree2) {
+        if (tree1 === null && tree2 === null) return true;
+        if (tree1 === null || tree2 === null) return false;
+        if (!tree1.hasOwnProperty("nodes") && !tree2.hasOwnProperty("nodes"))
+            return tree1.child === tree2.child;
+        if (tree1.hasOwnProperty("nodes") && tree2.hasOwnProperty("nodes")) {
+            if (tree1.nodes.length !== tree2.nodes.length) return false;
+            for (let i = 0; i < tree1.nodes.length; i++) {
+                if (!compare_trees(tree1.nodes[i], tree2.nodes[i])) return false;
             }
+            return true;
+        } else {
+            return false;
         }
-        if (debug_mode) console.log("Disable is on, not removing");
-        return { disabled: null, tree };
     }
 
-    function get_search_and_remove() {
-        // run until found disabled key or the last_state not changed for a while
-
-        let last_state = null;
-        let last_state_time = Date.now();
-        return () => {
-            const result = search_and_remove();
-            if (result.hasOwnProperty("disabled")) return true;
-            const compare_trees = (tree1, tree2) => {
-                if (tree1 === null && tree2 === null) return true;
-                if (tree1 === null || tree2 === null) return false;
-                if (!tree1.hasOwnProperty("nodes") && !tree2.hasOwnProperty("nodes"))
-                    return tree1.child === tree2.child;
-                if (tree1.hasOwnProperty("nodes") && tree2.hasOwnProperty("nodes")) {
-                    if (tree1.nodes.length !== tree2.nodes.length) return false;
-                    for (let i = 0; i < tree1.nodes.length; i++) {
-                        if (!compare_trees(tree1.nodes[i], tree2.nodes[i])) return false;
-                    }
-                    return true;
-                } else {
-                    return false;
-                }
-            };
-            if (!compare_trees(result.tree, last_state)) {
-                if (debug_mode) console.log("State changed, updating last_state");
-                last_state = result.tree;
-                last_state_time = Date.now();
-                return false;
-            } else {
-                if (Date.now() - last_state_time > 500) {
-                    if (debug_mode) console.log("State stable, stopping further checks");
-                    return true;
-                } else {
-                    if (debug_mode) console.log("State not stable yet, continue checking");
-                    return false;
-                }
-            }
+    function detect_target_dom_walk(root, last_state) {
+        const get_target = (root) => {
+            let tree = walk_dom(root);
+            if (tree === null || !tree.hasOwnProperty("nodes")) return { tree };
+            if (debug_mode) console.log("Initial tree:", tree);
+            tree = merge_ai_overview_nodes(tree);
+            if (debug_mode) console.log("Merged tree:", tree);
+            if (tree === null || !tree.hasOwnProperty("nodes")) return { tree };
+            if (debug_mode) highlight_tree(tree);
+            return { target: detect_target(tree), tree };
         };
+        const now = Date.now();
+        let result = get_target(root);
+        if (result.hasOwnProperty("target") && result.target !== null) {
+            return { target: result.target, state: { tree: result.tree, time: now } };
+        }
+        if (last_state === null) {
+            return { state: { tree: result.tree, time: now } };
+        }
+        if (!compare_trees(result.tree, last_state.tree)) {
+            if (debug_mode) console.log("State changed, updating last_state");
+            return { state: { tree: result.tree, time: now } };
+        } else {
+            if (now - last_state.time > 500) {
+                if (debug_mode) console.log("State stable, stopping further checks");
+                return { target: null, state: { tree: result.tree, time: now } };
+            } else {
+                if (debug_mode) console.log("State not stable yet, continue checking");
+                return { state: { tree: result.tree, time: now } };
+            }
+        }
     }
 
     function observe_changes() {
-        const search_and_remove_instance = get_search_and_remove();
-
+        let last_state = null;
         let timeout = null;
         let interval = null;
         let observer = null;
@@ -206,11 +188,30 @@
             if (interval) return;
 
             interval = setInterval(() => {
-                if (search_and_remove_instance()) {
-                    if (debug_mode) console.log("Timer: DOM stable or resolved");
+                const root = document.body.querySelector("#main");
+                if (!root) root = document.body;
+                const result = detect_target_dom_walk(root, last_state);
+                last_state = result.state;
+                if (result.hasOwnProperty("target")) {
                     cleanup_interval();
-                } else if (debug_mode) {
-                    console.log("Timer: Continue checking");
+                    if (result.target === null) {
+                        if (debug_mode) console.log("Target not found, stopping checks");
+                        return;
+                    } else {
+                        if (debug_mode) console.log("Target found:", result.target);
+                    }
+                    if (debug_mode) {
+                        result.target.style.outline = "1px solid #ff0000";
+                        result.target.style.outlineOffset = "2px";
+                        return;
+                    }
+                    if (disable) {
+                        if (debug_mode) console.log("Disable is on, not removing");
+                        return;
+                    }
+                    result.target.style.display = "none";
+                } else {
+                    if (debug_mode) console.log("Target not found, continuing checks");
                 }
             }, 50);
         };
@@ -247,14 +248,12 @@
             case "set_highlight":
                 debug_mode = msg.value;
                 chrome.storage?.local.set({ debug_mode }).catch(() => {});
-                search_and_remove();
                 send_response({ debug_mode });
                 break;
 
             case "set_disable":
                 disable = msg.value;
                 chrome.storage?.local.set({ disable }).catch(() => {});
-                search_and_remove();
                 send_response({ disable });
                 break;
 
