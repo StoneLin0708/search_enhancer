@@ -53,13 +53,13 @@
         }
     }
 
-    function merge_ai_overview_nodes(tree) {
+    function merge_target_nodes(tree) {
         if (tree.hasOwnProperty("nodes")) {
             let star_leaf = tree.nodes.find((n) => n.type === "star");
-            if (star_leaf) {
-                return { parent: tree.parent, child: star_leaf.child, type: "ai_overview" };
+            if (star_leaf && tree.nodes.length === 2) {
+                return { parent: tree.parent, child: star_leaf.child, type: "star" };
             }
-            const nodes = tree.nodes.map(merge_ai_overview_nodes);
+            const nodes = tree.nodes.map(merge_target_nodes);
             if (nodes.length > 1) {
                 return { ...tree, nodes };
             } else if (nodes.length === 1) {
@@ -78,7 +78,6 @@
             }
             tree.child.style.outlineOffset = "2px";
         } else if (tree.hasOwnProperty("nodes")) {
-            if (debug_mode) console.log("Highlighting tree:", tree);
             for (const child of tree.parent.children) {
                 if (child.querySelector("path[d='" + PATHS.dots + "']") === null) continue;
                 child.style.outline = "1px solid #0000ff";
@@ -91,78 +90,64 @@
     }
 
     function detect_target(tree) {
-        const find_in_tree = (node) => {
-            if (node.hasOwnProperty("type") && node.type === "ai_overview") {
-                return true;
-            } else if (node.hasOwnProperty("nodes")) {
-                return node.nodes.some(find_in_tree);
+        if (tree.hasOwnProperty("type") && tree.type === "star") {
+            return tree.parent;
+        } else if (tree.hasOwnProperty("nodes")) {
+            for (const child of tree.nodes) {
+                const res = detect_target(child);
+                if (res !== null) return res;
             }
-            return false;
-        };
-        for (const node of tree.nodes) {
-            if (debug_mode) console.log("Scanning node:", node);
-            if (find_in_tree(node)) {
-                // check if search form exists to avoid false positive
-                if (node.parent.querySelector("form[action='/search']") !== null) {
-                    if (debug_mode)
-                        console.log("Search form found, skipping removal:", node.parent);
-                    return null;
-                }
-
-                if (node.parent && node.parent.style !== undefined) {
-                    return node.parent;
-                } else {
-                    return null;
-                }
-            }
+            return null;
         }
         return null;
     }
+
     function compare_trees(tree1, tree2) {
         if (tree1 === null && tree2 === null) return true;
         if (tree1 === null || tree2 === null) return false;
-        if (!tree1.hasOwnProperty("nodes") && !tree2.hasOwnProperty("nodes"))
-            return tree1.child === tree2.child;
+        if (tree1.hasOwnProperty("child") && tree2.hasOwnProperty("child")) {
+            return (
+                tree1.child === tree2.child &&
+                tree1.type === tree2.type &&
+                tree1.parent === tree2.parent
+            );
+        }
         if (tree1.hasOwnProperty("nodes") && tree2.hasOwnProperty("nodes")) {
             if (tree1.nodes.length !== tree2.nodes.length) return false;
             for (let i = 0; i < tree1.nodes.length; i++) {
                 if (!compare_trees(tree1.nodes[i], tree2.nodes[i])) return false;
             }
             return true;
-        } else {
-            return false;
         }
+        return false;
     }
 
     function detect_target_dom_walk(root, last_state) {
-        const get_target = (root) => {
-            let tree = walk_dom(root);
-            if (tree === null || !tree.hasOwnProperty("nodes")) return { tree };
-            if (debug_mode) console.log("Initial tree:", tree);
-            tree = merge_ai_overview_nodes(tree);
-            if (debug_mode) console.log("Merged tree:", tree);
-            if (tree === null || !tree.hasOwnProperty("nodes")) return { tree };
-            if (debug_mode) highlight_tree(tree);
-            return { target: detect_target(tree), tree };
-        };
         const now = Date.now();
-        let result = get_target(root);
-        if (result.hasOwnProperty("target") && result.target !== null) {
-            return { target: result.target, state: { tree: result.tree, time: now } };
+        const tree = walk_dom(root);
+        if (debug_mode) console.log("Initial tree:", tree);
+        const mtree = merge_target_nodes(tree);
+        if (debug_mode) console.log("Merged tree:", mtree);
+        if (mtree !== null && mtree.hasOwnProperty("nodes")) {
+            if (debug_mode) highlight_tree(mtree);
+            // valid tree
+            const target = detect_target(mtree);
+            if (target !== null) {
+                return { target, state: { tree, time: now } };
+            }
         }
-        if (last_state === null) {
-            return { state: { tree: result.tree, time: now } };
-        }
-        if (!compare_trees(result.tree, last_state.tree)) {
+        // invalid tree or target not found
+        if (last_state === null) return { state: { tree, time: now } };
+        if (!compare_trees(tree, last_state.tree)) {
             if (debug_mode) console.log("State changed, updating last_state");
-            return { state: { tree: result.tree, time: now } };
+            return { state: { tree, time: now } };
         } else {
             if (now - last_state.time > 500) {
                 if (debug_mode) console.log("State stable, stopping further checks");
-                return { target: null, state: { tree: result.tree, time: now } };
+                return { target: null, state: { tree, time: now } };
             } else {
                 if (debug_mode) console.log("State not stable yet, continue checking");
-                return { state: { tree: result.tree, time: now } };
+                return { state: { tree, time: last_state.time } };
             }
         }
     }
@@ -222,7 +207,7 @@
 
             timeout = setTimeout(() => {
                 start_interval();
-            }, 100);
+            }, 50);
         });
 
         const search_container = document.body.querySelector("#main");
