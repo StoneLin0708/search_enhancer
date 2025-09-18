@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
     "name": "Search Enhancer",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "Enhance Google search results by removing AI overview",
     "permissions": ["activeTab", "storage"],
     "host_permissions": ["*://www.google.com/*"],
