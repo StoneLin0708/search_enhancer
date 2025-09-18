@@ -47,9 +47,9 @@
         if (results.length == 0) {
             return null;
         } else if (results.length == 1) {
-            return results[0];
+            return { ...results[0], parent: node };
         } else {
-            return { parent: node, nodes: results };
+            return { nodes: results, parent: node };
         }
     }
 
@@ -57,7 +57,7 @@
         if (tree.hasOwnProperty("nodes")) {
             let star_leaf = tree.nodes.find((n) => n.type === "star");
             if (star_leaf) {
-                return { parent: tree, child: star_leaf.child, type: "ai_overview" };
+                return { parent: tree.parent, child: star_leaf.child, type: "ai_overview" };
             }
             const nodes = tree.nodes.map(merge_ai_overview_nodes);
             if (nodes.length > 1) {
@@ -78,6 +78,7 @@
             }
             tree.child.style.outlineOffset = "2px";
         } else if (tree.hasOwnProperty("nodes")) {
+            if (debug_mode) console.log("Highlighting tree:", tree);
             for (const child of tree.parent.children) {
                 child.style.outline = "1px solid #0000ff";
                 child.style.outlineOffset = "2px";
@@ -100,6 +101,13 @@
         for (const node of tree.nodes) {
             if (debug_mode) console.log("Scanning node:", node);
             if (find_in_tree(node)) {
+                // check if search form exists to avoid false positive
+                if (node.parent.querySelector("form[action='/search']") !== null) {
+                    if (debug_mode)
+                        console.log("Search form found, skipping removal:", node.parent);
+                    return null;
+                }
+
                 if (node.parent && node.parent.style !== undefined) {
                     if (debug_mode) console.log("Removing AI Overview element:", node.parent);
                     node.parent.style.display = "none";
@@ -113,19 +121,26 @@
     }
 
     function search_and_remove() {
-        let tree = walk_dom(document.body);
+        const root = document.body.querySelector("#main");
+        if (!root) root = document.body;
+        let tree = walk_dom(root);
         if (tree === null || !tree.hasOwnProperty("nodes")) return { tree };
+        if (debug_mode) console.log("Initial tree:", tree);
         tree = merge_ai_overview_nodes(tree);
+        if (debug_mode) console.log("Merged tree:", tree);
         if (tree === null || !tree.hasOwnProperty("nodes")) return { tree };
         if (debug_mode) highlight_tree(tree);
         if (!disable) {
             const res = scan_and_remove_ai_overview(tree);
             if (res) {
+                if (debug_mode) console.log("AI Overview removed:", res);
                 return { disabled: res, tree };
             } else {
+                if (debug_mode) console.log("No AI Overview found");
                 return { tree };
             }
         }
+        if (debug_mode) console.log("Disable is on, not removing");
         return { disabled: null, tree };
     }
 
@@ -140,13 +155,17 @@
             const compare_trees = (tree1, tree2) => {
                 if (tree1 === null && tree2 === null) return true;
                 if (tree1 === null || tree2 === null) return false;
-                if (tree1.id !== tree2.id) return false;
-                if (tree1.hasOwnProperty("nodes") !== tree2.hasOwnProperty("nodes")) return false;
-                if (tree1.nodes?.length !== tree2.nodes?.length) return false;
-                for (let i = 0; i < tree1.nodes?.length; i++) {
-                    if (!compare_trees(tree1.nodes[i], tree2.nodes[i])) return false;
+                if (!tree1.hasOwnProperty("nodes") && !tree2.hasOwnProperty("nodes"))
+                    return tree1.child === tree2.child;
+                if (tree1.hasOwnProperty("nodes") && tree2.hasOwnProperty("nodes")) {
+                    if (tree1.nodes.length !== tree2.nodes.length) return false;
+                    for (let i = 0; i < tree1.nodes.length; i++) {
+                        if (!compare_trees(tree1.nodes[i], tree2.nodes[i])) return false;
+                    }
+                    return true;
+                } else {
+                    return false;
                 }
-                return true;
             };
             if (!compare_trees(result.tree, last_state)) {
                 if (debug_mode) console.log("State changed, updating last_state");
@@ -154,7 +173,7 @@
                 last_state_time = Date.now();
                 return false;
             } else {
-                if (Date.now() - last_state_time > 100) {
+                if (Date.now() - last_state_time > 500) {
                     if (debug_mode) console.log("State stable, stopping further checks");
                     return true;
                 } else {
@@ -166,26 +185,55 @@
     }
 
     function observe_changes() {
-        // only trigger when search DOM is not changing for a while
         const search_and_remove_instance = get_search_and_remove();
+
         let timeout = null;
-        const observer = new MutationObserver((mutations) => {
-            if (timeout) clearTimeout(timeout);
-            timeout = setTimeout(() => {
+        let interval = null;
+        let observer = null;
+
+        const cleanup_interval = () => {
+            if (interval) {
+                clearInterval(interval);
+                interval = null;
+            }
+            if (timeout) {
+                clearTimeout(timeout);
+                timeout = null;
+            }
+        };
+
+        const start_interval = () => {
+            if (interval) return;
+
+            interval = setInterval(() => {
                 if (search_and_remove_instance()) {
-                    if (debug_mode) console.log("Search DOM stable, stopping further checks");
-                    observer.disconnect();
-                } else {
-                    if (debug_mode) console.log("Search DOM changed, continue observing");
+                    if (debug_mode) console.log("Timer: DOM stable or resolved");
+                    cleanup_interval();
+                } else if (debug_mode) {
+                    console.log("Timer: Continue checking");
                 }
             }, 50);
+        };
+
+        // trigger interval on DOM changes
+        observer = new MutationObserver(() => {
+            if (timeout) clearTimeout(timeout);
+
+            timeout = setTimeout(() => {
+                start_interval();
+            }, 100);
         });
 
-        const search_container = document.body.querySelector("#search");
-        observer.observe(search_container, {
-            childList: true,
-            subtree: true,
-        });
+        const search_container = document.body.querySelector("#main");
+        if (search_container) {
+            observer.observe(search_container, {
+                childList: true,
+                subtree: true,
+            });
+        } else {
+            if (debug_mode) console.log("Search container not found, starting timer only");
+            start_interval();
+        }
     }
 
     if (document.readyState === "loading") {
